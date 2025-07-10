@@ -1,11 +1,31 @@
 import express from 'express';
 import fetch from 'node-fetch';
+import logger from './logger.js';
 
 const app = express();
-const PORT = process.env.PORT; // no fallback!
+const PORT = process.env.PORT || 8080; // Add fallback for container deployment
 
 // Middleware to parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`${req.method} ${req.path}`, {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      duration,
+      userAgent: req.get('User-Agent'),
+      ip: req.ip || req.connection.remoteAddress
+    });
+  });
+  
+  next();
+});
 
 // Configuration
 const CONFIG = {
@@ -18,14 +38,47 @@ const CONFIG = {
 // Simple request queue for rate limiting
 let requestQueue = [];
 let isProcessing = false;
+let isShuttingDown = false;
+
+// Graceful shutdown handling
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+async function gracefulShutdown() {
+  logger.info('🔄 Received shutdown signal, starting graceful shutdown...');
+  isShuttingDown = true;
+  
+  // Stop accepting new requests
+  server.close(() => {
+    logger.info('✅ HTTP server closed');
+  });
+  
+  // Wait for current requests to complete
+  if (requestQueue.length > 0) {
+    logger.info(`⏳ Waiting for ${requestQueue.length} queued requests to complete...`);
+    await new Promise(resolve => {
+      const checkQueue = () => {
+        if (requestQueue.length === 0) {
+          resolve();
+        } else {
+          setTimeout(checkQueue, 100);
+        }
+      };
+      checkQueue();
+    });
+  }
+  
+  logger.info('✅ Graceful shutdown completed');
+  process.exit(0);
+}
 
 // Process queue with rate limiting
 async function processQueue() {
-  if (isProcessing || requestQueue.length === 0) return;
+  if (isProcessing || requestQueue.length === 0 || isShuttingDown) return;
   
   isProcessing = true;
   
-  while (requestQueue.length > 0) {
+  while (requestQueue.length > 0 && !isShuttingDown) {
     const { email, key, resolve, reject } = requestQueue.shift();
     
     try {
@@ -36,7 +89,7 @@ async function processQueue() {
     }
     
     // Rate limiting delay
-    if (requestQueue.length > 0) {
+    if (requestQueue.length > 0 && !isShuttingDown) {
       await new Promise(resolve => setTimeout(resolve, CONFIG.RATE_LIMIT_DELAY));
     }
   }
@@ -81,6 +134,10 @@ async function verifySingleEmail(email, key) {
 
 // Queue-based verification with rate limiting
 async function verifyEmailWithQueue(email, key) {
+  if (isShuttingDown) {
+    throw new Error('Server is shutting down');
+  }
+  
   return new Promise((resolve, reject) => {
     requestQueue.push({ email, key, resolve, reject });
     processQueue();
@@ -98,6 +155,16 @@ async function verifyBatchEmails(emails, key) {
   }
   
   for (const batch of batches) {
+    if (isShuttingDown) {
+      // Add remaining emails as failed due to shutdown
+      results.push(...batch.map(email => ({
+        email,
+        success: false,
+        error: 'Server is shutting down'
+      })));
+      break;
+    }
+    
     const batchPromises = batch.map(email => verifyEmailWithQueue(email, key));
     const batchResults = await Promise.allSettled(batchPromises);
     
@@ -119,6 +186,10 @@ async function verifyBatchEmails(emails, key) {
 
 // Original single email endpoint (maintained for backward compatibility)
 app.get('/verify', async (req, res) => {
+  if (isShuttingDown) {
+    return res.status(503).json({ error: "Server is shutting down" });
+  }
+
   const { email, key } = req.query;
 
   if (!email || !key) {
@@ -140,6 +211,10 @@ app.get('/verify', async (req, res) => {
 
 // New batch processing endpoint
 app.post('/verify/batch', async (req, res) => {
+  if (isShuttingDown) {
+    return res.status(503).json({ error: "Server is shutting down" });
+  }
+
   const { emails, key } = req.body;
 
   if (!emails || !Array.isArray(emails) || !key) {
@@ -156,45 +231,62 @@ app.post('/verify/batch', async (req, res) => {
     return res.status(400).json({ error: "Maximum 1000 emails per batch" });
   }
 
-  try {
-    console.log(`🔄 Processing batch of ${emails.length} emails`);
-    const startTime = Date.now();
-    
-    const results = await verifyBatchEmails(emails, key);
-    
-    const endTime = Date.now();
-    const processingTime = endTime - startTime;
-    
-    const successCount = results.filter(r => r.success).length;
-    const failureCount = results.length - successCount;
-    
-    console.log(`✅ Batch completed: ${successCount} success, ${failureCount} failed in ${processingTime}ms`);
-    
-    res.status(200).json({
-      total: results.length,
-      successful: successCount,
-      failed: failureCount,
-      processingTime,
-      results
-    });
-  } catch (err) {
-    console.error('❌ Batch processing error:', err);
-    res.status(500).json({ error: err.message });
-  }
+      try {
+      logger.info(`🔄 Processing batch of ${emails.length} emails`, { batchSize: emails.length });
+      const startTime = Date.now();
+      
+      const results = await verifyBatchEmails(emails, key);
+      
+      const endTime = Date.now();
+      const processingTime = endTime - startTime;
+      
+      const successCount = results.filter(r => r.success).length;
+      const failureCount = results.length - successCount;
+      
+      logger.info(`✅ Batch completed: ${successCount} success, ${failureCount} failed in ${processingTime}ms`, {
+        total: results.length,
+        successful: successCount,
+        failed: failureCount,
+        processingTime
+      });
+      
+      res.status(200).json({
+        total: results.length,
+        successful: successCount,
+        failed: failureCount,
+        processingTime,
+        results
+      });
+    } catch (err) {
+      logger.error('❌ Batch processing error:', { error: err.message, stack: err.stack });
+      res.status(500).json({ error: err.message });
+    }
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
-    status: 'healthy',
+    status: isShuttingDown ? 'shutting_down' : 'healthy',
     queueLength: requestQueue.length,
     isProcessing,
+    isShuttingDown,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Root endpoint for container health checks
+app.get('/', (req, res) => {
+  res.status(200).json({
+    service: 'GMass Proxy',
+    version: '1.0.0',
+    status: isShuttingDown ? 'shutting_down' : 'healthy',
     timestamp: new Date().toISOString()
   });
 });
 
 // Server startup
-app.listen(PORT, () => {
-  console.log(`✅ GMass Proxy running on port ${PORT}`);
-  console.log(`📊 Configuration: ${CONFIG.MAX_CONCURRENT_REQUESTS} concurrent, ${CONFIG.RATE_LIMIT_DELAY}ms delay`);
+const server = app.listen(PORT, () => {
+  logger.info(`✅ GMass Proxy running on port ${PORT}`, { port: PORT });
+  logger.info(`📊 Configuration: ${CONFIG.MAX_CONCURRENT_REQUESTS} concurrent, ${CONFIG.RATE_LIMIT_DELAY}ms delay`, CONFIG);
+  logger.info(`🚀 Ready to handle requests`);
 });

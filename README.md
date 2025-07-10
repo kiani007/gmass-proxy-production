@@ -115,9 +115,41 @@ curl -X POST http://localhost:3000/verify/batch \
 
 ## Deployment
 
-1. Set the `PORT` environment variable
-2. Run `npm start`
+### Local Development
+1. Set the `PORT` environment variable (defaults to 8080)
+2. Run `npm start` for production or `npm run dev` for development with auto-reload
 3. The server will be available on the specified port
+
+**Development with Nodemon:**
+```bash
+npm run dev
+```
+This will automatically restart the server when you make changes to the code.
+
+### Docker Deployment
+```bash
+# Build the Docker image
+docker build -t gmass-proxy .
+
+# Run the container
+docker run -p 8080:8080 -e PORT=8080 gmass-proxy
+
+# Or with custom port
+docker run -p 3000:3000 -e PORT=3000 gmass-proxy
+```
+
+### Container Health Checks
+The container includes built-in health checks that verify the service is responding:
+- **Health endpoint**: `GET /health`
+- **Root endpoint**: `GET /` (returns service info)
+- **Docker health check**: Runs every 30 seconds
+
+### Graceful Shutdown
+The server handles SIGTERM signals gracefully:
+- Stops accepting new requests
+- Completes in-progress requests
+- Closes HTTP server cleanly
+- Exits with status 0
 
 ## Performance
 
@@ -126,6 +158,20 @@ curl -X POST http://localhost:3000/verify/batch \
 - **Batch Processing**: Up to 1000 emails per batch request
 - **Timeout Protection**: 30-second timeout prevents hanging requests
 - **Error Recovery**: Failed requests are logged and reported
+
+## Logging
+
+The application uses Winston for structured logging:
+
+- **Console Logs**: Colored output for development
+- **File Logs**: JSON format stored in `logs/` directory
+- **Log Levels**: error, warn, info, debug (configurable via `LOG_LEVEL` env var)
+- **Request Logging**: All HTTP requests are logged with timing and status
+- **Error Tracking**: Full stack traces for debugging
+
+**Log Files:**
+- `logs/combined.log` - All logs
+- `logs/error.log` - Error logs only
 
 ## Error Handling
 
@@ -136,4 +182,4 @@ The proxy handles various error scenarios:
 - Malformed requests
 - Server errors
 
-All errors are logged and returned with appropriate HTTP status codes.
+All errors are logged with structured data and returned with appropriate HTTP status codes.
