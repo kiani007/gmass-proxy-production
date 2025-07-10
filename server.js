@@ -2,7 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT; // no fallback!
 
 app.get('/verify', async (req, res) => {
   const { email, key } = req.query;
@@ -23,5 +23,5 @@ app.get('/verify', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ GMass Proxy running on http://localhost:${PORT}`);
+  console.log(`✅ GMass Proxy running on port ${PORT}`);
 });
