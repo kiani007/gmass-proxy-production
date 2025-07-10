@@ -1,2 +1,5 @@
 node_modules
 .env
+test-curl.sh
+test-requests.js
+test-with-server.js

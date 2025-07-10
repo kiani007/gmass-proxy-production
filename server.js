@@ -1,9 +1,8 @@
 import express from 'express';
 import fetch from 'node-fetch';
-import logger from './logger.js';
 
 const app = express();
-const PORT = process.env.PORT || 8080; // Add fallback for container deployment
+const PORT = process.env.PORT || 3000; // Add fallback for container deployment
 
 // Middleware to parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
@@ -14,14 +13,7 @@ app.use((req, res, next) => {
   
   res.on('finish', () => {
     const duration = Date.now() - start;
-    logger.info(`${req.method} ${req.path}`, {
-      method: req.method,
-      path: req.path,
-      statusCode: res.statusCode,
-      duration,
-      userAgent: req.get('User-Agent'),
-      ip: req.ip || req.connection.remoteAddress
-    });
+    console.log(`${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
   });
   
   next();
@@ -45,17 +37,17 @@ process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
 async function gracefulShutdown() {
-  logger.info('🔄 Received shutdown signal, starting graceful shutdown...');
+  console.log('🔄 Received shutdown signal, starting graceful shutdown...');
   isShuttingDown = true;
   
   // Stop accepting new requests
   server.close(() => {
-    logger.info('✅ HTTP server closed');
+    console.log('✅ HTTP server closed');
   });
   
   // Wait for current requests to complete
   if (requestQueue.length > 0) {
-    logger.info(`⏳ Waiting for ${requestQueue.length} queued requests to complete...`);
+    console.log(`⏳ Waiting for ${requestQueue.length} queued requests to complete...`);
     await new Promise(resolve => {
       const checkQueue = () => {
         if (requestQueue.length === 0) {
@@ -68,7 +60,7 @@ async function gracefulShutdown() {
     });
   }
   
-  logger.info('✅ Graceful shutdown completed');
+  console.log('✅ Graceful shutdown completed');
   process.exit(0);
 }
 
@@ -231,36 +223,31 @@ app.post('/verify/batch', async (req, res) => {
     return res.status(400).json({ error: "Maximum 1000 emails per batch" });
   }
 
-      try {
-      logger.info(`🔄 Processing batch of ${emails.length} emails`, { batchSize: emails.length });
-      const startTime = Date.now();
-      
-      const results = await verifyBatchEmails(emails, key);
-      
-      const endTime = Date.now();
-      const processingTime = endTime - startTime;
-      
-      const successCount = results.filter(r => r.success).length;
-      const failureCount = results.length - successCount;
-      
-      logger.info(`✅ Batch completed: ${successCount} success, ${failureCount} failed in ${processingTime}ms`, {
-        total: results.length,
-        successful: successCount,
-        failed: failureCount,
-        processingTime
-      });
-      
-      res.status(200).json({
-        total: results.length,
-        successful: successCount,
-        failed: failureCount,
-        processingTime,
-        results
-      });
-    } catch (err) {
-      logger.error('❌ Batch processing error:', { error: err.message, stack: err.stack });
-      res.status(500).json({ error: err.message });
-    }
+  try {
+    console.log(`🔄 Processing batch of ${emails.length} emails`);
+    const startTime = Date.now();
+    
+    const results = await verifyBatchEmails(emails, key);
+    
+    const endTime = Date.now();
+    const processingTime = endTime - startTime;
+    
+    const successCount = results.filter(r => r.success).length;
+    const failureCount = results.length - successCount;
+    
+    console.log(`✅ Batch completed: ${successCount} success, ${failureCount} failed in ${processingTime}ms`);
+    
+    res.status(200).json({
+      total: results.length,
+      successful: successCount,
+      failed: failureCount,
+      processingTime,
+      results
+    });
+  } catch (err) {
+    console.error('❌ Batch processing error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Health check endpoint
@@ -286,7 +273,7 @@ app.get('/', (req, res) => {
 
 // Server startup
 const server = app.listen(PORT, () => {
-  logger.info(`✅ GMass Proxy running on port ${PORT}`, { port: PORT });
-  logger.info(`📊 Configuration: ${CONFIG.MAX_CONCURRENT_REQUESTS} concurrent, ${CONFIG.RATE_LIMIT_DELAY}ms delay`, CONFIG);
-  logger.info(`🚀 Ready to handle requests`);
+  console.log(`✅ GMass Proxy running on port ${PORT}`);
+  console.log(`📊 Configuration: ${CONFIG.MAX_CONCURRENT_REQUESTS} concurrent, ${CONFIG.RATE_LIMIT_DELAY}ms delay`);
+  console.log(`🚀 Ready to handle requests`);
 });

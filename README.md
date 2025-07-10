@@ -113,6 +113,15 @@ curl -X POST http://localhost:3000/verify/batch \
   -d '{"emails":["email1@example.com","email2@example.com"],"key":"your-key"}'
 ```
 
+### Testing
+```bash
+# Run Node.js tests
+npm test
+
+# Run cURL tests (requires jq for JSON formatting)
+npm run test:curl
+```
+
 ## Deployment
 
 ### Local Development
@@ -159,19 +168,7 @@ The server handles SIGTERM signals gracefully:
 - **Timeout Protection**: 30-second timeout prevents hanging requests
 - **Error Recovery**: Failed requests are logged and reported
 
-## Logging
 
-The application uses Winston for structured logging:
-
-- **Console Logs**: Colored output for development
-- **File Logs**: JSON format stored in `logs/` directory
-- **Log Levels**: error, warn, info, debug (configurable via `LOG_LEVEL` env var)
-- **Request Logging**: All HTTP requests are logged with timing and status
-- **Error Tracking**: Full stack traces for debugging
-
-**Log Files:**
-- `logs/combined.log` - All logs
-- `logs/error.log` - Error logs only
 
 ## Error Handling
 
@@ -182,4 +179,4 @@ The proxy handles various error scenarios:
 - Malformed requests
 - Server errors
 
-All errors are logged with structured data and returned with appropriate HTTP status codes.
+All errors are logged and returned with appropriate HTTP status codes.
